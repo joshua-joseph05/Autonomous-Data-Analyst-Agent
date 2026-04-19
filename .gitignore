@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python
+.venv/
+**/.venv/
+**/.venv-run/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Next.js
+.next/
+out/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.DS_Store
+.idea/
+*.swp
+*.swo
+
+# Backend data dirs (from backend .gitignore)
+data-insight-ai/backend/cleaned_exports/
+data-insight-ai/backend/raw_uploads/
+
+# Logs / coverage
+*.log
+coverage/
+.nyc_output/
+
+# Local DB / caches
+*.db
+**/*.tsbuildinfo
