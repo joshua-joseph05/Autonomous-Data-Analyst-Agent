@@ -1,14 +1,14 @@
 # Autonomous Data Analyst Agent
 
-**Autonomous Data Analyst Agent** — upload a CSV, explore it with statistics and correlations, and train simple ML models (linear regression or logistic-style classification) with optional LLM-guided feature selection.
+**Autonomous Data Analyst Agent** — upload a CSV, explore it with statistics and correlations, and train simple ML models (linear regression or logistic-style classification) with LLM-guided feature selection.
 
 ## Features
 
 - **Upload & cleaning** — CSV ingestion, automated cleaning pipeline, preview, and cleaned CSV export.
 - **Exploratory analysis** — summary stats, correlation insights, and charts.
 - **ML training** — automatic target/feature selection, validation-based feature engineering, and subset search.
-- **Iterative agent loop** (optional) — multi-round LLM feature proposals with repeated holdout validation, per-iteration logs, and post-loop refinement (pair champion + subset search).
-- **Local LLM (optional)** — [Ollama](https://ollama.com/) for upload-time insights and agent steps when configured.
+- **Iterative agent loop** — multi-round LLM feature proposals with repeated holdout validation, per-iteration logs, and post-loop refinement (pair champion + subset search).
+- **Local LLM** — [Ollama](https://ollama.com/) for upload-time insights and agent steps when configured.
 
 ## Tech stack
 
