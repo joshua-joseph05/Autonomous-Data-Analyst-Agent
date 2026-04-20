@@ -115,17 +115,17 @@ export default function Dashboard({ fileId }: DashboardProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 relative">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative">
         <div className="absolute top-6 right-6 flex flex-col items-end gap-2">
           <Link
             href={`/dashboard/${encodeURIComponent(fileId)}/train`}
-            className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+            className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-700"
           >
             Train ML model
           </Link>
           <Link
             href={`/dashboard/${encodeURIComponent(fileId)}/train?agent_loop=1`}
-            className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-50"
+            className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-indigo-50/40 px-4 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-100/50"
           >
             Agent loop (5 rounds + chart)
           </Link>
@@ -135,10 +135,10 @@ export default function Dashboard({ fileId }: DashboardProps) {
             <h1 className="text-2xl font-bold text-gray-900">
               Analysis Dashboard
             </h1>
-            <p className="text-gray-600 mt-1 truncate" title={analysis.filename}>
+            <p className="text-slate-600 mt-1 truncate" title={analysis.filename}>
               {analysis.filename}
             </p>
-            <p className="text-sm text-gray-500 mt-2">
+            <p className="text-sm text-slate-500 mt-2">
               Download the full cleaned CSV (all rows, same cleaning as analysis).
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -146,7 +146,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
                 type="button"
                 onClick={handleDownloadCleaned}
                 disabled={exportingCleaned}
-                className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none"
+                className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none"
               >
                 {exportingCleaned ? 'Preparing download…' : 'Download cleaned CSV'}
               </button>
@@ -159,12 +159,12 @@ export default function Dashboard({ fileId }: DashboardProps) {
       </div>
 
       {/* How this file was cleaned (server-reported stats) */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-2">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h2 className="text-lg font-semibold text-slate-900 mb-2">
           How this dataset was cleaned
         </h2>
         {analysis.cleaning_report ? (
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-700">
             <p>
               For <span className="font-medium text-gray-900">{analysis.filename}</span>
               , the uploaded table started with{' '}
@@ -187,7 +187,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
               cleaned version.
             </p>
             <p>
-              <span className="font-medium text-gray-800">High-missing columns.</span>{' '}
+              <span className="font-medium text-slate-800">High-missing columns.</span>{' '}
               Using a{' '}
               {analysis.cleaning_report.null_threshold_percent}% missing-value cutoff,{' '}
               {analysis.cleaning_report.columns_dropped_high_null.length === 0
@@ -195,14 +195,14 @@ export default function Dashboard({ fileId }: DashboardProps) {
                 : `${analysis.cleaning_report.columns_dropped_high_null.length} column(s) were removed: ${analysis.cleaning_report.columns_dropped_high_null.join(', ')}.`}
             </p>
             <p>
-              <span className="font-medium text-gray-800">Column types.</span>{' '}
+              <span className="font-medium text-slate-800">Column types.</span>{' '}
               {analysis.cleaning_report.low_cardinality_columns_as_category.length ===
               0
                 ? 'No text columns were promoted to category type.'
                 : `${analysis.cleaning_report.low_cardinality_columns_as_category.length} low-cardinality text column(s) were stored as categories: ${analysis.cleaning_report.low_cardinality_columns_as_category.join(', ')}. Numeric columns were coerced to numbers (unparseable values became empty cells).`}
             </p>
             <p>
-              <span className="font-medium text-gray-800">Row checks.</span>{' '}
+              <span className="font-medium text-slate-800">Row checks.</span>{' '}
               {analysis.cleaning_report.outlier_row_removal_enabled ? (
                 <>
                   {analysis.cleaning_report.iqr_outlier_rows_removed === 0
@@ -217,7 +217,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
               )}
             </p>
             <p>
-              <span className="font-medium text-gray-800">Duplicates and dates.</span>{' '}
+              <span className="font-medium text-slate-800">Duplicates and dates.</span>{' '}
               {analysis.cleaning_report.duplicate_rows_removed === 0
                 ? 'No exact duplicate rows were found.'
                 : `${analysis.cleaning_report.duplicate_rows_removed} duplicate row(s) were removed.`}{' '}
@@ -225,7 +225,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
               empty after parsing are counted in the final gap step below.
             </p>
             <p>
-              <span className="font-medium text-gray-800">Imputation.</span>{' '}
+              <span className="font-medium text-slate-800">Imputation.</span>{' '}
               {analysis.cleaning_report.numeric_columns_filled.length === 0
                 ? 'No numeric columns needed missing-value imputation.'
                 : `Numeric gaps were filled (median, or 0 if needed) in ${analysis.cleaning_report.numeric_columns_filled.length} column(s): ${analysis.cleaning_report.numeric_columns_filled.join(', ')}.`}{' '}
@@ -234,7 +234,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
                 : `Category-style gaps were filled (mode, or "Unknown") in ${analysis.cleaning_report.categorical_columns_filled.length} column(s): ${analysis.cleaning_report.categorical_columns_filled.join(', ')}.`}
             </p>
             <p>
-              <span className="font-medium text-gray-800">Categorical encoding.</span>{' '}
+              <span className="font-medium text-slate-800">Categorical encoding.</span>{' '}
               {analysis.cleaning_report.binary_categorical_columns_encoded.length === 0
                 ? 'No categorical columns had exactly two distinct values, so no binary encoding was applied.'
                 : `${analysis.cleaning_report.binary_categorical_columns_encoded.length} binary categorical column(s) were encoded to 0/1: ${analysis.cleaning_report.binary_categorical_columns_encoded.join(', ')}.`}{' '}
@@ -244,14 +244,14 @@ export default function Dashboard({ fileId }: DashboardProps) {
                 : `${analysis.cleaning_report.single_value_categorical_columns_dropped.length} categorical column(s) were dropped because they had only one distinct value: ${analysis.cleaning_report.single_value_categorical_columns_dropped.join(', ')}.`}
             </p>
             <p>
-              <span className="font-medium text-gray-800">Feature relevance pruning.</span>{' '}
+              <span className="font-medium text-slate-800">Feature relevance pruning.</span>{' '}
               {analysis.cleaning_report.categorical_columns_dropped_low_association
                 .length === 0
                 ? 'No categorical columns were dropped for low association with other features.'
                 : `${analysis.cleaning_report.categorical_columns_dropped_low_association.length} categorical column(s) were dropped because they were not meaningfully related to most other features: ${analysis.cleaning_report.categorical_columns_dropped_low_association.join(', ')}.`}
             </p>
             <p>
-              <span className="font-medium text-gray-800">Remaining gaps.</span>{' '}
+              <span className="font-medium text-slate-800">Remaining gaps.</span>{' '}
               {analysis.cleaning_report.drop_remaining_null_rows_enabled ? (
                 analysis.cleaning_report.rows_removed_unresolved_nulls === 0 ? (
                   <>After imputation, every cell had a value; no rows were dropped for leftover nulls.</>
@@ -288,7 +288,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
       </div>
 
       {/* Summary Stats */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Summary Statistics</h2>
         <div className="grid grid-cols-4 gap-4">
           <div className="text-center p-4 bg-blue-50 rounded-lg">
@@ -319,7 +319,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
       </div>
 
       {/* Column Metadata */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Column Details</h2>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -372,7 +372,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
       <ExploratoryAnalysis analysis={analysis} />
 
       {/* Correlations */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">
           Correlation Analysis
         </h2>
@@ -465,7 +465,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
       </div>
 
       {/* Insights */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">AI Insights</h2>
         <div className="space-y-4">
           <div>
@@ -510,7 +510,7 @@ export default function Dashboard({ fileId }: DashboardProps) {
       </div>
 
       {/* Data Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-gray-800">
             Cleaned dataset preview

@@ -333,10 +333,10 @@ function TrainModelPageContent() {
   if (loading) {
     return (
       <main className="mx-auto max-w-5xl px-4 py-10">
-        <div className="flex items-center justify-center min-h-[60vh] rounded-lg border border-gray-200 bg-white">
+        <div className="flex items-center justify-center min-h-[50vh]">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-5"></div>
-            <p className="text-5xl text-gray-600">Loading ML model</p>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading ML model...</p>
           </div>
         </div>
       </main>
@@ -348,7 +348,7 @@ function TrainModelPageContent() {
       <main className="mx-auto max-w-5xl px-4 py-10 space-y-4">
         <Link
           href={`/dashboard/${encodeURIComponent(fileId)}`}
-          className="text-sm text-blue-700 hover:underline"
+          className="text-sm text-indigo-700 hover:text-indigo-800 hover:underline"
         >
           ← Back to dashboard
         </Link>
@@ -407,7 +407,7 @@ function TrainModelPageContent() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Link
           href={`/dashboard/${encodeURIComponent(fileId)}`}
-          className="text-sm text-blue-700 hover:underline"
+          className="text-sm text-indigo-700 hover:text-indigo-800 hover:underline"
         >
           ← Back to dashboard
         </Link>
@@ -433,7 +433,7 @@ function TrainModelPageContent() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-6">
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-6">
         <h1 className="text-2xl font-bold text-gray-900">ML Model Results</h1>
         <p className="mt-2 text-sm text-gray-600">
           Model: <span className="font-medium">{m.model_type}</span> | Target:{' '}
@@ -447,7 +447,7 @@ function TrainModelPageContent() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {inferredType === 'classification' ? (
           <>
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
               <div className="text-sm text-gray-500">Accuracy</div>
               <div className="text-2xl font-semibold text-gray-900">
                 {typeof metrics.accuracy === 'number'
@@ -455,13 +455,13 @@ function TrainModelPageContent() {
                   : '—'}
               </div>
             </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
               <div className="text-sm text-gray-500">F1 (macro)</div>
               <div className="text-2xl font-semibold text-gray-900">
                 {typeof metrics.f1 === 'number' ? metrics.f1.toFixed(3) : '—'}
               </div>
             </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
               <div className="text-sm text-gray-500">Model</div>
               <div className="text-sm font-semibold text-gray-900 leading-snug">
                 {m.model_type.replace(/_/g, ' ')}
@@ -470,19 +470,19 @@ function TrainModelPageContent() {
           </>
         ) : (
           <>
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
               <div className="text-sm text-gray-500">R²</div>
               <div className="text-2xl font-semibold text-gray-900">
                 {typeof metrics.r2 === 'number' ? metrics.r2.toFixed(3) : '—'}
               </div>
             </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
               <div className="text-sm text-gray-500">MAE</div>
               <div className="text-2xl font-semibold text-gray-900">
                 {typeof metrics.mae === 'number' ? metrics.mae.toFixed(3) : '—'}
               </div>
             </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
               <div className="text-sm text-gray-500">RMSE</div>
               <div className="text-2xl font-semibold text-gray-900">
                 {typeof metrics.rmse === 'number' ? metrics.rmse.toFixed(3) : '—'}
@@ -507,7 +507,7 @@ function TrainModelPageContent() {
         </p>
       ) : null}
 
-      <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-6">
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 shadow-sm p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-1">
           Iterative agent training (validation over time)
         </h2>
@@ -523,7 +523,7 @@ function TrainModelPageContent() {
               adjusted by pair champion / subset search when those beat the best LLM iteration.
             </p>
 
-            <div className="mb-8 rounded-lg border border-indigo-100 bg-white p-4">
+            <div className="mb-8 rounded-xl border border-indigo-100 bg-white shadow-sm p-4">
               <h3 className="text-base font-semibold text-gray-900 mb-1">
                 {inferredType === 'classification'
                   ? 'Macro F1 over iterations'
@@ -618,9 +618,9 @@ function TrainModelPageContent() {
                       xanchor: 'right',
                       x: 1,
                     },
-                    plot_bgcolor: '#fafafa',
+                    plot_bgcolor: '#f8fafc',
                     paper_bgcolor: 'rgba(0,0,0,0)',
-                    font: { family: 'system-ui, sans-serif', size: 12, color: '#374151' },
+                    font: { family: 'system-ui, sans-serif', size: 12, color: '#334155' },
                   }}
                   config={{ responsive: true, displaylogo: false }}
                   style={{ width: '100%', height: '100%' }}
@@ -644,7 +644,7 @@ function TrainModelPageContent() {
               {result.agent_iterations.map((step) => (
                 <li
                   key={step.iteration}
-                  className="rounded-md border border-indigo-100 bg-white p-4 text-sm"
+                  className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 text-sm"
                 >
                   <div className="font-semibold text-gray-900">
                     Iteration {step.iteration}{' '}
@@ -674,41 +674,13 @@ function TrainModelPageContent() {
                     <span className="text-gray-500">Features: </span>
                     {step.features.join(', ')}
                   </p>
-                  {step.feature_ablation && step.feature_ablation.length > 0 ? (
-                    <div className="mt-2 rounded border border-gray-100 bg-gray-50/80 px-3 py-2 text-xs text-gray-700">
-                      <div className="font-medium text-gray-800">
-                        Validation ablation (leave-one-feature-out, same folds as headline score)
-                      </div>
-                      <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                        {step.feature_ablation.map((a) => (
-                          <li key={a.feature}>
-                            <span className="font-mono text-gray-800">{a.feature}</span>
-                            {inferredType === 'classification' ? (
-                              <>
-                                {' '}
-                                — marginal F1{' '}
-                                {(a.marginal_f1 ?? 0).toFixed(4)}, marginal acc{' '}
-                                {(a.marginal_acc ?? 0).toFixed(4)}
-                              </>
-                            ) : (
-                              <>
-                                {' '}
-                                — marginal R² {(a.marginal_r2 ?? 0).toFixed(4)} (score if removed{' '}
-                                {(a.mean_val_r2_if_removed ?? 0).toFixed(4)})
-                              </>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
                   <p className="mt-2 text-gray-600 leading-relaxed">{step.reasoning}</p>
                 </li>
               ))}
             </ol>
           </>
         ) : (
-          <div className="rounded-lg border border-dashed border-indigo-200 bg-white/80 p-5 text-sm text-gray-700">
+          <div className="rounded-xl border border-dashed border-indigo-300 bg-white/95 p-5 text-sm text-slate-700">
             <p className="mb-3">
               This result used the <strong>standard</strong> training path (one automatic pipeline).
               To see a <strong>chart and per-iteration log</strong> (5 LLM rounds with validation
@@ -722,7 +694,7 @@ function TrainModelPageContent() {
             ) : (
               <Link
                 href={`/dashboard/${encodeURIComponent(fileId)}/train?agent_loop=1`}
-                className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
+                className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700"
               >
                 Run agent-loop training (5 iterations + chart)
               </Link>
@@ -731,7 +703,7 @@ function TrainModelPageContent() {
         )}
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-6">
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-3">Model Graph</h2>
         {inferredType === 'regression' ? (
           <div className="space-y-8">
@@ -765,9 +737,9 @@ function TrainModelPageContent() {
                   margin: { l: 70, r: 20, t: 50, b: 60 },
                   xaxis: { title: 'Actual values' },
                   yaxis: { title: 'Predicted values' },
-                  plot_bgcolor: '#fafafa',
+                  plot_bgcolor: '#f8fafc',
                   paper_bgcolor: 'rgba(0,0,0,0)',
-                  font: { family: 'system-ui, sans-serif', size: 12, color: '#374151' },
+                  font: { family: 'system-ui, sans-serif', size: 12, color: '#334155' },
                   legend: { orientation: 'h' as const, y: 1.12 },
                 }}
                 config={{ responsive: true, displaylogo: false }}
@@ -802,9 +774,9 @@ function TrainModelPageContent() {
                   margin: { l: 70, r: 20, t: 50, b: 60 },
                   xaxis: { title: 'Predicted values' },
                   yaxis: { title: 'Residuals (actual - predicted)' },
-                  plot_bgcolor: '#fafafa',
+                  plot_bgcolor: '#f8fafc',
                   paper_bgcolor: 'rgba(0,0,0,0)',
-                  font: { family: 'system-ui, sans-serif', size: 12, color: '#374151' },
+                  font: { family: 'system-ui, sans-serif', size: 12, color: '#334155' },
                 }}
                 config={{ responsive: true, displaylogo: false }}
                 style={{ width: '100%', height: '100%' }}
@@ -829,9 +801,9 @@ function TrainModelPageContent() {
                   margin: { l: 70, r: 20, t: 50, b: 60 },
                   xaxis: { title: 'Residual' },
                   yaxis: { title: 'Frequency' },
-                  plot_bgcolor: '#fafafa',
+                  plot_bgcolor: '#f8fafc',
                   paper_bgcolor: 'rgba(0,0,0,0)',
-                  font: { family: 'system-ui, sans-serif', size: 12, color: '#374151' },
+                  font: { family: 'system-ui, sans-serif', size: 12, color: '#334155' },
                 }}
                 config={{ responsive: true, displaylogo: false }}
                 style={{ width: '100%', height: '100%' }}
@@ -869,9 +841,9 @@ function TrainModelPageContent() {
                       margin: { l: 80, r: 20, t: 50, b: 60 },
                       xaxis: { title: 'Predicted label' },
                       yaxis: { title: 'True label' },
-                      plot_bgcolor: '#fafafa',
+                      plot_bgcolor: '#f8fafc',
                       paper_bgcolor: 'rgba(0,0,0,0)',
-                      font: { family: 'system-ui, sans-serif', size: 12, color: '#374151' },
+                      font: { family: 'system-ui, sans-serif', size: 12, color: '#334155' },
                     }}
                     config={{ responsive: true, displaylogo: false }}
                     style={{ width: '100%', height: '100%' }}
@@ -887,7 +859,7 @@ function TrainModelPageContent() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-6">
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-3">AI Insights</h2>
         <h3 className="text-sm font-semibold text-gray-800 mb-2">Key Findings</h3>
         <ul className="space-y-2">
@@ -900,7 +872,7 @@ function TrainModelPageContent() {
         </ul>
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-6">
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-3">
           Feature Contribution (Coefficients)
         </h2>
