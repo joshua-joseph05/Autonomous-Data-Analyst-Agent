@@ -1,4 +1,4 @@
-# DataInsight AI
+# Autonomous Data Analyst Agent
 
 **Autonomous Data Analyst Agent** — upload a CSV, explore it with statistics and correlations, and train simple ML models (linear regression or logistic-style classification) with optional LLM-guided feature selection.
 
