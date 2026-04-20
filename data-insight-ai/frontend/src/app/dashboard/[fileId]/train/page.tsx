@@ -1,12 +1,27 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { trainMlModel, type MLTrainResponse } from '@/lib/api';
+import { Suspense, useEffect, useState } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
+import {
+  trainMlModel,
+  type MLAgentIteration,
+  type MLTrainResponse,
+} from '@/lib/api';
 import dynamic from 'next/dynamic';
 
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false });
+
+/** Primary metric for charts/cards (explicit fields preferred, else legacy `score`). */
+function agentIterationPrimaryMetric(
+  step: MLAgentIteration,
+  kind: 'classification' | 'regression'
+): number {
+  if (kind === 'classification') {
+    return typeof step.f1_macro === 'number' ? step.f1_macro : step.score;
+  }
+  return typeof step.validation_r2 === 'number' ? step.validation_r2 : step.score;
+}
 
 type InsightsView = {
   summary: string;
@@ -285,9 +300,13 @@ function confusionMatrix(
   return { labels, matrix: mat };
 }
 
-export default function TrainModelPage() {
+function TrainModelPageContent() {
   const params = useParams<{ fileId: string }>();
+  const searchParams = useSearchParams();
   const fileId = decodeURIComponent(params.fileId || '');
+  const loopParam =
+    searchParams.get('agent_loop') ?? searchParams.get('agentLoop') ?? '';
+  const agentLoop = /^(1|true|yes|on)$/i.test(loopParam);
   const [result, setResult] = useState<MLTrainResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -297,7 +316,7 @@ export default function TrainModelPage() {
       setLoading(true);
       setError(null);
       try {
-        const data = await trainMlModel(fileId);
+        const data = await trainMlModel(fileId, { agentLoop });
         setResult(data);
       } catch (err: any) {
         const detail = err?.response?.data?.detail;
@@ -309,7 +328,7 @@ export default function TrainModelPage() {
       }
     };
     if (fileId) run();
-  }, [fileId]);
+  }, [fileId, agentLoop]);
 
   if (loading) {
     return (
@@ -385,16 +404,33 @@ export default function TrainModelPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-10 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Link
           href={`/dashboard/${encodeURIComponent(fileId)}`}
           className="text-sm text-blue-700 hover:underline"
         >
           ← Back to dashboard
         </Link>
-        <span className="text-xs text-gray-500 uppercase tracking-wide">
-          Auto-selected model
-        </span>
+        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
+          <span className="text-gray-500 uppercase tracking-wide">
+            Auto-selected model
+          </span>
+          {agentLoop ? (
+            <Link
+              href={`/dashboard/${encodeURIComponent(fileId)}/train`}
+              className="text-blue-700 hover:underline"
+            >
+              Switch to standard training
+            </Link>
+          ) : (
+            <Link
+              href={`/dashboard/${encodeURIComponent(fileId)}/train?agent_loop=1`}
+              className="text-blue-700 hover:underline"
+            >
+              Train with LLM agent loop (5 iterations)
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-white p-6">
@@ -453,6 +489,245 @@ export default function TrainModelPage() {
               </div>
             </div>
           </>
+        )}
+      </div>
+
+      {typeof (metrics as Record<string, unknown>).single_split_f1 === 'number' ? (
+        <p className="mb-4 text-xs text-gray-600">
+          Top metrics use the same repeated holdout estimate as the agent loop (aligned with the
+          iteration chart). Single random 80/20 split on the trained model: F1{' '}
+          {Number((metrics as Record<string, unknown>).single_split_f1).toFixed(3)}, accuracy{' '}
+          {Number((metrics as Record<string, unknown>).single_split_accuracy).toFixed(3)}.
+        </p>
+      ) : null}
+      {typeof (metrics as Record<string, unknown>).single_split_r2 === 'number' ? (
+        <p className="mb-4 text-xs text-gray-600">
+          R² above uses repeated holdout (agent protocol). Single split R²:{' '}
+          {Number((metrics as Record<string, unknown>).single_split_r2).toFixed(3)}.
+        </p>
+      ) : null}
+
+      <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">
+          Iterative agent training (validation over time)
+        </h2>
+        {result.agent_iterations && result.agent_iterations.length > 0 ? (
+          <>
+            <p className="text-sm text-gray-700 mb-4">
+              Best LLM iteration (validation):{' '}
+              <span className="font-semibold">
+                {result.agent_best_iteration ?? '—'}
+              </span>
+              . Training first applied the same validation-based feature engineering as the standard
+              path (when applicable), then the 5-round agent run below. Final features may still be
+              adjusted by pair champion / subset search when those beat the best LLM iteration.
+            </p>
+
+            <div className="mb-8 rounded-lg border border-indigo-100 bg-white p-4">
+              <h3 className="text-base font-semibold text-gray-900 mb-1">
+                {inferredType === 'classification'
+                  ? 'Macro F1 over iterations'
+                  : 'Validation R² over iterations'}
+              </h3>
+              <p className="text-xs text-gray-600 mb-3">
+                Each point is the mean across repeated held-out validation folds for that
+                iteration&apos;s features (
+                {inferredType === 'classification'
+                  ? 'macro F1; list below also shows mean validation accuracy per iteration'
+                  : 'R²; higher is better'}
+                ).
+              </p>
+              <div className="w-full min-h-[300px]">
+                <Plot
+                  data={[
+                    {
+                      type: 'scatter',
+                      mode: 'lines+markers',
+                      x: result.agent_iterations.map((s) => s.iteration),
+                      y: result.agent_iterations.map((s) =>
+                        agentIterationPrimaryMetric(s, inferredType)
+                      ),
+                      name:
+                        inferredType === 'classification'
+                          ? 'Macro F1 (mean val.)'
+                          : 'R² (mean val.)',
+                      line: { color: '#4f46e5', width: 2, shape: 'spline' },
+                      marker: { color: '#6366f1', size: 11, line: { color: '#fff', width: 1 } },
+                    },
+                    ...(typeof result.agent_best_iteration === 'number'
+                      ? [
+                          {
+                            type: 'scatter' as const,
+                            mode: 'markers' as const,
+                            x: result.agent_iterations
+                              .filter(
+                                (s) => s.iteration === result.agent_best_iteration
+                              )
+                              .map((s) => s.iteration),
+                            y: result.agent_iterations
+                              .filter(
+                                (s) => s.iteration === result.agent_best_iteration
+                              )
+                              .map((s) =>
+                                agentIterationPrimaryMetric(s, inferredType)
+                              ),
+                            name: 'Best LLM iteration',
+                            marker: {
+                              color: '#059669',
+                              size: 16,
+                              symbol: 'diamond',
+                              line: { color: '#fff', width: 1 },
+                            },
+                          },
+                        ]
+                      : []),
+                  ]}
+                  layout={{
+                    title: {
+                      text:
+                        inferredType === 'classification'
+                          ? 'Macro F1 vs iteration'
+                          : 'R² vs iteration',
+                      font: { size: 14 },
+                    },
+                    autosize: true,
+                    height: 320,
+                    margin: { l: 56, r: 24, t: 48, b: 48 },
+                    xaxis: {
+                      title: 'Iteration',
+                      dtick: 1,
+                      tick0: 1,
+                      range: [
+                        0.5,
+                        Math.max(
+                          5.5,
+                          ...result.agent_iterations.map((s) => s.iteration)
+                        ),
+                      ],
+                    },
+                    yaxis: {
+                      title:
+                        inferredType === 'classification'
+                          ? 'Mean validation F1'
+                          : 'Mean validation R²',
+                    },
+                    legend: {
+                      orientation: 'h',
+                      yanchor: 'bottom',
+                      y: 1.02,
+                      xanchor: 'right',
+                      x: 1,
+                    },
+                    plot_bgcolor: '#fafafa',
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    font: { family: 'system-ui, sans-serif', size: 12, color: '#374151' },
+                  }}
+                  config={{ responsive: true, displaylogo: false }}
+                  style={{ width: '100%', height: '100%' }}
+                  useResizeHandler
+                />
+              </div>
+              {Boolean(
+                (m.selection as { agent_loop?: { refined_from_best_iteration?: boolean } } | undefined)
+                  ?.agent_loop?.refined_from_best_iteration
+              ) ? (
+                <p className="mt-3 text-xs text-gray-600">
+                  The green marker is the best <strong>LLM</strong> iteration. Final features may
+                  differ after a <strong>pair champion</strong> step and/or the same{' '}
+                  <strong>subset search</strong> used in standard training (whichever scores higher
+                  on repeated holdout — see features under ML Model Results).
+                </p>
+              ) : null}
+            </div>
+
+            <ol className="space-y-4">
+              {result.agent_iterations.map((step) => (
+                <li
+                  key={step.iteration}
+                  className="rounded-md border border-indigo-100 bg-white p-4 text-sm"
+                >
+                  <div className="font-semibold text-gray-900">
+                    Iteration {step.iteration}{' '}
+                    <span className="font-normal text-gray-600">
+                      · {step.model.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-sm text-gray-800">
+                    {inferredType === 'classification' ? (
+                      <>
+                        <span className="text-gray-500">Macro F1 (mean on val folds):</span>{' '}
+                        {(step.f1_macro ?? step.score).toFixed(4)}
+                        {' · '}
+                        <span className="text-gray-500">Accuracy (mean on val folds):</span>{' '}
+                        {typeof step.validation_accuracy === 'number'
+                          ? step.validation_accuracy.toFixed(4)
+                          : '—'}
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-gray-500">R² (mean on val folds):</span>{' '}
+                        {(step.validation_r2 ?? step.score).toFixed(4)}
+                      </>
+                    )}
+                  </div>
+                  <p className="mt-1 text-gray-700">
+                    <span className="text-gray-500">Features: </span>
+                    {step.features.join(', ')}
+                  </p>
+                  {step.feature_ablation && step.feature_ablation.length > 0 ? (
+                    <div className="mt-2 rounded border border-gray-100 bg-gray-50/80 px-3 py-2 text-xs text-gray-700">
+                      <div className="font-medium text-gray-800">
+                        Validation ablation (leave-one-feature-out, same folds as headline score)
+                      </div>
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                        {step.feature_ablation.map((a) => (
+                          <li key={a.feature}>
+                            <span className="font-mono text-gray-800">{a.feature}</span>
+                            {inferredType === 'classification' ? (
+                              <>
+                                {' '}
+                                — marginal F1{' '}
+                                {(a.marginal_f1 ?? 0).toFixed(4)}, marginal acc{' '}
+                                {(a.marginal_acc ?? 0).toFixed(4)}
+                              </>
+                            ) : (
+                              <>
+                                {' '}
+                                — marginal R² {(a.marginal_r2 ?? 0).toFixed(4)} (score if removed{' '}
+                                {(a.mean_val_r2_if_removed ?? 0).toFixed(4)})
+                              </>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  <p className="mt-2 text-gray-600 leading-relaxed">{step.reasoning}</p>
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : (
+          <div className="rounded-lg border border-dashed border-indigo-200 bg-white/80 p-5 text-sm text-gray-700">
+            <p className="mb-3">
+              This result used the <strong>standard</strong> training path (one automatic pipeline).
+              To see a <strong>chart and per-iteration log</strong> (5 LLM rounds with validation
+              feedback), run training with the agent loop enabled.
+            </p>
+            {agentLoop ? (
+              <p className="text-amber-800 text-xs">
+                Agent mode was requested but no iteration data was returned. Try refreshing or
+                check the API response.
+              </p>
+            ) : (
+              <Link
+                href={`/dashboard/${encodeURIComponent(fileId)}/train?agent_loop=1`}
+                className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Run agent-loop training (5 iterations + chart)
+              </Link>
+            )}
+          </div>
         )}
       </div>
 
@@ -673,3 +948,18 @@ export default function TrainModelPage() {
   );
 }
 
+export default function TrainModelPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-5xl px-4 py-10">
+          <div className="flex min-h-[40vh] items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600">
+            Loading…
+          </div>
+        </main>
+      }
+    >
+      <TrainModelPageContent />
+    </Suspense>
+  );
+}

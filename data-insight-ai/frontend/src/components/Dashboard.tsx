@@ -116,12 +116,20 @@ export default function Dashboard({ fileId }: DashboardProps) {
     <div className="space-y-6">
       {/* Header */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 relative">
-        <Link
-          href={`/dashboard/${encodeURIComponent(fileId)}/train`}
-          className="absolute top-6 right-6 inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-        >
-          Train ML model
-        </Link>
+        <div className="absolute top-6 right-6 flex flex-col items-end gap-2">
+          <Link
+            href={`/dashboard/${encodeURIComponent(fileId)}/train`}
+            className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+          >
+            Train ML model
+          </Link>
+          <Link
+            href={`/dashboard/${encodeURIComponent(fileId)}/train?agent_loop=1`}
+            className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-50"
+          >
+            Agent loop (5 rounds + chart)
+          </Link>
+        </div>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl font-bold text-gray-900">

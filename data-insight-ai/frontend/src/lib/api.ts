@@ -159,8 +159,42 @@ export interface ExploratorySeriesResponse {
   series: Record<string, Array<number | null>>;
 }
 
+/** Leave-one-feature-out validation deltas for one agent iteration (same protocol as headline score). */
+export interface MLAgentFeatureAblation {
+  feature: string;
+  /** Regression: mean validation R² when this feature is removed from the set. */
+  mean_val_r2_if_removed?: number;
+  /** Regression: full-set mean val R² minus mean val R² without this feature. */
+  marginal_r2?: number;
+  mean_val_f1_if_removed?: number;
+  marginal_f1?: number;
+  mean_val_acc_if_removed?: number;
+  marginal_acc?: number;
+}
+
+/** One step of the optional LLM agent loop for feature selection (backend). */
+export interface MLAgentIteration {
+  iteration: number;
+  features: string[];
+  model: string;
+  /** Legacy chart series; equals f1_macro (classification) or validation_r2 (regression). */
+  score: number;
+  reasoning: string;
+  /** Mean macro F1 across repeated validation folds (classification). */
+  f1_macro?: number;
+  /** Mean accuracy across those same folds (classification). */
+  validation_accuracy?: number;
+  /** Mean R² across repeated validation folds (regression). */
+  validation_r2?: number;
+  /** Present when |features| >= 2: marginal validation impact per feature. */
+  feature_ablation?: MLAgentFeatureAblation[];
+}
+
 export interface MLTrainResponse {
   file_id: string;
+  agent_iterations?: MLAgentIteration[];
+  /** 1-based iteration number that produced the best validation score */
+  agent_best_iteration?: number;
   model: {
     model_type: string;
     problem_type?: 'regression' | 'classification';
@@ -171,7 +205,19 @@ export interface MLTrainResponse {
     test_rows: number;
     metrics:
       | { r2: number; mae: number; rmse: number }
-      | { accuracy: number; f1: number };
+      | {
+          accuracy: number;
+          f1: number;
+          /** Present for agent-loop: one random train/test split */
+          single_split_f1?: number;
+          single_split_accuracy?: number;
+        }
+      | {
+          r2: number;
+          mae: number;
+          rmse: number;
+          single_split_r2?: number;
+        };
     evaluation?: {
       y_true: Array<number | string>;
       y_pred: Array<number | string>;
@@ -179,6 +225,8 @@ export interface MLTrainResponse {
     };
     coefficients: Array<{ feature: string; coefficient: number }>;
     sample_predictions: Array<{ actual: number | string; predicted: number | string }>;
+    /** Training metadata (e.g. agent_loop, feature_engineering) from the API */
+    selection?: Record<string, unknown>;
   };
   insights: {
     summary: string;
@@ -502,9 +550,15 @@ export const getExploratorySeries = async (
   return response.data;
 };
 
-export const trainMlModel = async (fileId: string): Promise<MLTrainResponse> => {
+export const trainMlModel = async (
+  fileId: string,
+  options?: { agentLoop?: boolean }
+): Promise<MLTrainResponse> => {
+  const params = options?.agentLoop === true ? { agent_loop: 'true' } : undefined;
   const response = await api.post<MLTrainResponse>(
-    `/ml/train/${encodeURIComponent(fileId)}`
+    `/ml/train/${encodeURIComponent(fileId)}`,
+    undefined,
+    { params }
   );
   return response.data;
 };

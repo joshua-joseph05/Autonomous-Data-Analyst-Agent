@@ -5,9 +5,10 @@ import logging
 import os
 import json
 import itertools
+from math import comb
 from io import BytesIO
 from pathlib import Path
-from typing import Union, Optional, List, Tuple
+from typing import Union, Optional, List, Tuple, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -447,6 +448,162 @@ def _is_better_classification_score(
     return False
 
 
+def _repeated_validation_out_is_better(
+    cand: Tuple[float, dict],
+    incumbent: Tuple[float, dict],
+    problem_type: str,
+    tol: float,
+) -> bool:
+    """Compare two `_repeated_heldout_score_from_df` results (same protocol)."""
+    if problem_type == "classification":
+        cf1 = float(cand[1].get("validation_f1", cand[0]))
+        cacc = float(cand[1].get("validation_accuracy", 0.0))
+        bf1 = float(incumbent[1].get("validation_f1", incumbent[0]))
+        bacc = float(incumbent[1].get("validation_accuracy", 0.0))
+        return _is_better_classification_score(cf1, cacc, bf1, bacc, tol=tol)
+    return float(cand[1].get("validation_r2", cand[0])) > float(
+        incumbent[1].get("validation_r2", incumbent[0])
+    ) + tol
+
+
+def _subset_validation_combo_count(pool_size: int, max_k: int) -> int:
+    """Count exhaustive subset evaluations for k=2..min(max_k, pool_size)."""
+    if pool_size < 2:
+        return 0
+    mk = min(max_k, pool_size)
+    total = 0
+    for k in range(2, mk + 1):
+        total += comb(pool_size, k)
+    return int(total)
+
+
+def _ordered_subset_from_pool(pool: List[str], names: set) -> List[str]:
+    return [c for c in pool if c in names]
+
+
+def _greedy_validation_feature_subset_search(
+    df: pd.DataFrame,
+    target: str,
+    pool: List[str],
+    problem_type: str,
+    max_k: int,
+    improve_tol: float,
+    rng: np.random.Generator,
+    *,
+    pair_prefix: int = 18,
+) -> Tuple[List[str], float, List[Dict[str, Any]]]:
+    """
+    Strong subset search when exhaustive combination counts are too large.
+
+    Seeds from the best-scoring pair among the first `pair_prefix` pool columns,
+    greedily adds features while validation improves, then prunes with backward
+    elimination. All scores use `_repeated_heldout_score_from_df`.
+    """
+    history: List[Dict[str, Any]] = []
+    if len(pool) < 2:
+        return pool[: max(1, len(pool))], -1e9, history
+
+    prefix = max(2, min(int(pair_prefix), len(pool)))
+    best_pair: Optional[List[str]] = None
+    best_pair_out: Optional[Tuple[float, dict]] = None
+
+    def _append_hist(feats: List[str], out: Tuple[float, dict], ktag: int) -> None:
+        score, aux = out
+        history.append(
+            {
+                "k": int(ktag),
+                "features": list(feats),
+                "validation_score": float(score),
+                "validation_r2": float(aux.get("validation_r2", score)),
+                "validation_accuracy": float(aux.get("validation_accuracy", 0.0)),
+                "validation_f1": float(aux.get("validation_f1", 0.0)),
+                "search": "greedy",
+            }
+        )
+
+    for i in range(prefix):
+        for j in range(i + 1, prefix):
+            pair = [pool[i], pool[j]]
+            out = _repeated_heldout_score_from_df(df, target, pair, problem_type, rng)
+            if not out:
+                continue
+            _append_hist(pair, out, 2)
+            if best_pair_out is None or _repeated_validation_out_is_better(
+                out, best_pair_out, problem_type, improve_tol
+            ):
+                best_pair = pair
+                best_pair_out = out
+
+    if best_pair is None or best_pair_out is None:
+        fb = pool[:2]
+        out = _repeated_heldout_score_from_df(df, target, fb, problem_type, rng)
+        if not out:
+            return fb, -1e9, history
+        best_pair = fb
+        best_pair_out = out
+        _append_hist(fb, out, 2)
+
+    current = _ordered_subset_from_pool(pool, set(best_pair))
+    cur_out = _repeated_heldout_score_from_df(df, target, current, problem_type, rng)
+    if not cur_out:
+        return current, -1e9, history
+    best_subset = list(current)
+    best_out = cur_out
+
+    while len(current) < min(max_k, len(pool)):
+        best_add: Optional[str] = None
+        best_cand_out: Optional[Tuple[float, dict]] = None
+        for f in pool:
+            if f in current:
+                continue
+            cand = _ordered_subset_from_pool(pool, set(current) | {f})
+            out = _repeated_heldout_score_from_df(df, target, cand, problem_type, rng)
+            if not out:
+                continue
+            _append_hist(cand, out, len(cand))
+            if best_cand_out is None or _repeated_validation_out_is_better(
+                out, best_cand_out, problem_type, improve_tol
+            ):
+                best_add = f
+                best_cand_out = out
+        if best_add is None or best_cand_out is None:
+            break
+        if not _repeated_validation_out_is_better(
+            best_cand_out, cur_out, problem_type, improve_tol
+        ):
+            break
+        current = _ordered_subset_from_pool(pool, set(current) | {best_add})
+        cur_out = best_cand_out
+        if _repeated_validation_out_is_better(cur_out, best_out, problem_type, improve_tol):
+            best_subset = list(current)
+            best_out = cur_out
+
+    # Backward pass: drop redundant features if it improves the objective.
+    changed = True
+    while changed and len(best_subset) > 2:
+        changed = False
+        base_out = _repeated_heldout_score_from_df(
+            df, target, best_subset, problem_type, rng
+        )
+        if not base_out:
+            break
+        for f in list(best_subset):
+            trial = [x for x in best_subset if x != f]
+            trial = _ordered_subset_from_pool(pool, set(trial))
+            out = _repeated_heldout_score_from_df(df, target, trial, problem_type, rng)
+            if not out:
+                continue
+            _append_hist(trial, out, len(trial))
+            if _repeated_validation_out_is_better(out, base_out, problem_type, improve_tol):
+                best_subset = trial
+                best_out = out
+                changed = True
+                break
+
+    best_score = float(best_out[0])
+    return best_subset, best_score, history
+
+
 def _best_binary_prob_threshold(
     y_true: np.ndarray, prob_pos: np.ndarray, pos_code: int, neg_code: int
 ) -> float:
@@ -591,6 +748,82 @@ def _repeated_heldout_score_from_df(
         return None
     work = df[cols + [target]].replace([np.inf, -np.inf], np.nan).dropna()
     return _repeated_heldout_score_on_work(work, cols, target, problem_type, rng)
+
+
+def _agent_per_feature_validation_ablation(
+    df: pd.DataFrame,
+    target: str,
+    feature_cols: List[str],
+    problem_type: str,
+    cached_base: Optional[Tuple[float, dict]] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """
+    Leave-one-feature-out under the same repeated-holdout protocol as the agent loop.
+
+    For each feature f in the current set, score the model with all columns except f.
+    Marginal metrics measure how much the full-set validation score drops when f is
+    omitted (higher => f mattered more in that multivariate context).
+
+    If `cached_base` is the `(score, aux)` tuple already computed for the full column
+    set, it is reused so the headline iteration score is not recomputed.
+    """
+    cols = [c for c in feature_cols if c in df.columns]
+    if len(cols) < 2:
+        return None
+
+    base = cached_base
+    if base is None:
+        base = _repeated_heldout_score_from_df(
+            df, target, cols, problem_type, np.random.default_rng(42)
+        )
+    if not base:
+        return None
+    _, base_aux = base
+    if problem_type == "regression":
+        base_primary = float(base_aux.get("validation_r2", base[0]))
+    else:
+        base_f1 = float(base_aux.get("validation_f1", base[0]))
+        base_acc = float(base_aux.get("validation_accuracy", 0.0))
+
+    rows: List[Dict[str, Any]] = []
+    for f in cols:
+        rest = [c for c in cols if c != f]
+        out = _repeated_heldout_score_from_df(
+            df, target, rest, problem_type, np.random.default_rng(42)
+        )
+        if not out:
+            continue
+        _, wo_aux = out
+        if problem_type == "regression":
+            wo = float(wo_aux.get("validation_r2", out[0]))
+            rows.append(
+                {
+                    "feature": f,
+                    "mean_val_r2_if_removed": wo,
+                    "marginal_r2": base_primary - wo,
+                }
+            )
+        else:
+            wo_f1 = float(wo_aux.get("validation_f1", out[0]))
+            wo_acc = float(wo_aux.get("validation_accuracy", 0.0))
+            rows.append(
+                {
+                    "feature": f,
+                    "mean_val_f1_if_removed": wo_f1,
+                    "marginal_f1": base_f1 - wo_f1,
+                    "mean_val_acc_if_removed": wo_acc,
+                    "marginal_acc": base_acc - wo_acc,
+                }
+            )
+
+    if problem_type == "regression":
+        rows.sort(key=lambda r: float(r["marginal_r2"]), reverse=True)
+    else:
+        rows.sort(
+            key=lambda r: (float(r["marginal_f1"]), float(r["marginal_acc"])),
+            reverse=True,
+        )
+    return rows
 
 
 def _sanitize_col_fragment(name: str) -> str:
@@ -881,62 +1114,84 @@ def _optimize_feature_subset_by_validation(
     target: str,
     features: List[str],
     problem_type: str = "regression",
+    *,
+    max_pool: int = 12,
+    max_k: int = 8,
+    max_exhaustive_subset_evals: int = 5500,
+    regression_improve_tol: float = 0.001,
 ) -> Tuple[List[str], dict]:
     """
     Search over feature subsets (bounded) and keep the subset with best
     repeated-holdout validation objective.
+
+    Uses exhaustive enumeration when the number of subset scores to evaluate stays
+    below `max_exhaustive_subset_evals`; otherwise falls back to a greedy search
+    (pair seed + forward selection + backward pruning) on the same pool.
     """
     keep = [f for f in features if f in df.columns and f != target]
     if len(keep) <= 2:
         return keep, {"subset_optimization": {"applied": False, "reason": "too_few_features"}}
 
-    # Keep search bounded for runtime stability.
     ranked = _rank_features_by_target_relevance(df, target, keep, problem_type=problem_type)
-    max_pool = 12
-    pool = ranked[:max_pool]
+    pool = ranked[: max(2, min(int(max_pool), len(ranked)))]
     if len(pool) <= 2:
         return pool, {"subset_optimization": {"applied": False, "reason": "too_few_features_after_pool"}}
 
-    improve_tol = 1e-6 if problem_type == "classification" else 0.001
+    improve_tol = 1e-6 if problem_type == "classification" else float(regression_improve_tol)
     rng = np.random.default_rng(42)
-    best_subset = pool[: min(3, len(pool))]
+    max_k_eff = min(int(max_k), len(pool))
+    combo_count = _subset_validation_combo_count(len(pool), max_k_eff)
+    strategy = "exhaustive"
+    history: List[Dict[str, Any]] = []
+    best_subset: List[str] = pool[: min(3, len(pool))]
     best_score = -1e9
     best_f1 = -1.0
     best_acc = -1.0
-    history = []
-    max_k = min(8, len(pool))
 
-    # Evaluate all subsets up to max_k, but bounded by max_pool.
-    for k in range(2, max_k + 1):
-        for combo in itertools.combinations(pool, k):
-            subset = list(combo)
-            out = _repeated_heldout_score_from_df(df, target, subset, problem_type, rng)
-            if out is None:
-                continue
-            score, aux = out
-            history.append(
-                {
-                    "k": int(k),
-                    "features": subset,
-                    "validation_score": float(score),
-                    "validation_r2": float(aux.get("validation_r2", score)),
-                    "validation_accuracy": float(aux.get("validation_accuracy", 0.0)),
-                    "validation_f1": float(aux.get("validation_f1", 0.0)),
-                }
-            )
-            if problem_type == "classification":
-                cand_f1 = float(aux.get("validation_f1", 0.0))
-                cand_acc = float(aux.get("validation_accuracy", 0.0))
-                if _is_better_classification_score(
-                    cand_f1, cand_acc, best_f1, best_acc, tol=improve_tol
-                ):
-                    best_f1 = cand_f1
-                    best_acc = cand_acc
+    if combo_count <= int(max_exhaustive_subset_evals):
+        for k in range(2, max_k_eff + 1):
+            for combo in itertools.combinations(pool, k):
+                subset = list(combo)
+                out = _repeated_heldout_score_from_df(df, target, subset, problem_type, rng)
+                if out is None:
+                    continue
+                score, aux = out
+                history.append(
+                    {
+                        "k": int(k),
+                        "features": subset,
+                        "validation_score": float(score),
+                        "validation_r2": float(aux.get("validation_r2", score)),
+                        "validation_accuracy": float(aux.get("validation_accuracy", 0.0)),
+                        "validation_f1": float(aux.get("validation_f1", 0.0)),
+                        "search": "exhaustive",
+                    }
+                )
+                if problem_type == "classification":
+                    cand_f1 = float(aux.get("validation_f1", 0.0))
+                    cand_acc = float(aux.get("validation_accuracy", 0.0))
+                    if _is_better_classification_score(
+                        cand_f1, cand_acc, best_f1, best_acc, tol=improve_tol
+                    ):
+                        best_f1 = cand_f1
+                        best_acc = cand_acc
+                        best_score = float(score)
+                        best_subset = subset
+                elif score > best_score + improve_tol:
                     best_score = float(score)
                     best_subset = subset
-            elif score > best_score + improve_tol:
-                best_score = float(score)
-                best_subset = subset
+    else:
+        strategy = "greedy"
+        best_subset, best_score, history = _greedy_validation_feature_subset_search(
+            df,
+            target,
+            pool,
+            problem_type,
+            max_k_eff,
+            improve_tol,
+            rng,
+            pair_prefix=min(18, len(pool)),
+        )
 
     if not history:
         return keep, {"subset_optimization": {"applied": False, "reason": "no_valid_scored_subsets"}}
@@ -946,7 +1201,11 @@ def _optimize_feature_subset_by_validation(
         "subset_optimization": {
             "applied": True,
             "objective": "r2" if problem_type == "regression" else "maximize_f1_then_accuracy",
+            "search_strategy": strategy,
+            "subset_combo_count": int(combo_count),
+            "max_exhaustive_subset_evals": int(max_exhaustive_subset_evals),
             "searched_pool_size": int(len(pool)),
+            "max_k": int(max_k_eff),
             "selected_feature_count": int(len(best_subset)),
             "best_validation_score": float(best_score),
             "top_candidates": history[:12],
@@ -1470,13 +1729,486 @@ def _build_ml_insight_prompt(payload: dict) -> str:
     )
 
 
+MAX_AGENT_TRAIN_ITERATIONS = 5
+
+
+def _numeric_feature_pool_for_agent(
+    df: pd.DataFrame, target: str, problem_type: str, max_pool: int = 28
+) -> List[str]:
+    """Ordered numeric candidate columns (excludes target, IDs, obvious leakage)."""
+    num_cols = [
+        c
+        for c in df.select_dtypes(include=["number"]).columns
+        if str(c) != str(target)
+    ]
+    candidates: List[str] = []
+    for c in num_cols:
+        if c not in df.columns:
+            continue
+        if _is_probable_id_column(df[c], str(c)):
+            continue
+        if _is_likely_leakage_feature(str(c), str(target)):
+            continue
+        candidates.append(str(c))
+    ranked = _rank_features_by_target_relevance(
+        df, target, candidates, problem_type=problem_type
+    )
+    return ranked[:max_pool]
+
+
+def _agent_pool_summary_lines(
+    df: pd.DataFrame, target: str, pool: List[str], problem_type: str
+) -> List[str]:
+    """Short per-column lines for the LLM prompt."""
+    lines: List[str] = []
+    y_num = pd.to_numeric(df[target], errors="coerce") if target in df.columns else None
+    for c in pool:
+        if c not in df.columns:
+            continue
+        s = pd.to_numeric(df[c], errors="coerce")
+        miss = float(s.isna().mean())
+        std = float(s.dropna().std(ddof=0) or 0.0)
+        extra = ""
+        if problem_type == "regression" and y_num is not None:
+            sub = pd.DataFrame({"x": s, "y": y_num}).dropna()
+            if len(sub) > 10:
+                rxy = float(sub["x"].corr(sub["y"]))
+                extra = f", abs_corr_to_target={abs(rxy):.3f}"
+        lines.append(f"- {c}: missing={miss:.3f}, std={std:.6f}{extra}")
+    return lines
+
+
+def _build_agent_feature_loop_prompt(
+    iteration: int,
+    max_iterations: int,
+    target: str,
+    problem_type: str,
+    pool_lines: List[str],
+    prior_iterations: List[Dict[str, Any]],
+    ranked_top_hint: str,
+) -> str:
+    obj = (
+        "maximize mean validation R² across held-out folds"
+        if problem_type == "regression"
+        else "maximize mean validation macro F1 (then accuracy as tie-breaker) across held-out folds"
+    )
+    hist = ""
+    if prior_iterations:
+        parts = []
+        for rec in prior_iterations:
+            row: Dict[str, Any] = {
+                "iteration": rec.get("iteration"),
+                "features": rec.get("features"),
+                "reasoning": (rec.get("reasoning") or "")[:400],
+            }
+            if rec.get("f1_macro") is not None:
+                row["f1_macro"] = rec.get("f1_macro")
+                row["validation_accuracy"] = rec.get("validation_accuracy")
+            elif rec.get("validation_r2") is not None:
+                row["validation_r2"] = rec.get("validation_r2")
+            else:
+                row["score"] = rec.get("score")
+            abl = rec.get("feature_ablation")
+            if isinstance(abl, list) and abl:
+                compact: List[Dict[str, Any]] = []
+                for item in abl[:12]:
+                    if not isinstance(item, dict):
+                        continue
+                    ent: Dict[str, Any] = {"feature": item.get("feature")}
+                    for k, v in item.items():
+                        if k == "feature":
+                            continue
+                        if isinstance(v, (int, float)) and not isinstance(v, bool):
+                            ent[k] = round(float(v), 5)
+                        else:
+                            ent[k] = v
+                    compact.append(ent)
+                row["feature_ablation"] = compact
+            parts.append(json.dumps(row, ensure_ascii=False))
+        hist = (
+            "\nPrior iterations (learn from scores and per-feature validation ablation; "
+            "adjust features accordingly):\n"
+            + "\n".join(parts)
+            + "\n"
+        )
+    return (
+        "You are an ML feature-selection agent. Each step you choose a subset of "
+        "numeric input columns to predict the target. A small model will be scored on repeated "
+        f"held-out validation; objective: {obj}.\n\n"
+        f"Iteration {iteration} of {max_iterations}.\n"
+        f"Target column: {target}\n"
+        f"Problem type: {problem_type}\n\n"
+        f"{ranked_top_hint}\n\n"
+        "Candidate columns (you may ONLY use names from this list):\n"
+        + "\n".join(pool_lines)
+        + f"\n{hist}\n"
+        "When prior rows include `feature_ablation`, each entry is a leave-one-out check on the "
+        "same validation protocol used for the headline score: train/score without that column "
+        "while keeping the rest. "
+        "Regression: `marginal_r2` = (this iteration's mean validation R² with the full set) "
+        "minus (mean validation R² if that feature is removed). "
+        "Classification: `marginal_f1` / `marginal_acc` are defined analogously from macro-F1 "
+        "and accuracy. "
+        "Larger positive marginal values mean the feature mattered more in that multivariate "
+        "model; near-zero or negative values are strong candidates to drop or replace next round.\n\n"
+        "Rules:\n"
+        "- Pick at least 1 and at most 12 feature names from the candidate list.\n"
+        "- Do not include the target as a feature.\n"
+        "- Prefer combinations that include several of the strongest-ranked columns above; "
+        "avoid only stacking weakly-associated columns.\n"
+        "- Use `feature_ablation` from the latest iteration(s) to justify removals, swaps, "
+        "or trying a simpler set without low-marginal columns.\n"
+        "- You may remove or swap features across iterations if validation feedback is flat or worsens.\n"
+        "- Explain briefly why this set should help for the next training step.\n"
+        "- Return strict JSON only, no markdown, no code fences:\n"
+        '{"features": ["col_a", "col_b"], "reasoning": "..."}\n'
+    )
+
+
+def _pick_best_agent_iteration_idx(
+    problem_type: str,
+    iterations: List[Dict[str, Any]],
+    aux_list: List[dict],
+) -> int:
+    """
+    Choose the iteration index with best validation objective.
+    Uses the same ordering as the rest of the pipeline (F1 then accuracy for classification).
+    """
+    if not iterations:
+        return 0
+    best_i = 0
+    for i in range(1, len(iterations)):
+        if problem_type == "classification":
+            f1_i = float(aux_list[i].get("validation_f1", iterations[i]["score"]))
+            acc_i = float(aux_list[i].get("validation_accuracy", 0.0))
+            f1_b = float(
+                aux_list[best_i].get("validation_f1", iterations[best_i]["score"])
+            )
+            acc_b = float(aux_list[best_i].get("validation_accuracy", 0.0))
+            if _is_better_classification_score(f1_i, acc_i, f1_b, acc_b):
+                best_i = i
+        else:
+            s_i = float(iterations[i]["score"])
+            s_b = float(iterations[best_i]["score"])
+            if s_i > s_b:
+                best_i = i
+    return best_i
+
+
+def _agent_global_champion_features(
+    df: pd.DataFrame,
+    target: str,
+    problem_type: str,
+    feature_pool: List[str],
+    agent_best_features: List[str],
+) -> Tuple[List[str], Dict[str, Any]]:
+    """
+    Compare the agent's best iteration to every pair drawn from the top of the
+    ranked pool under the same repeated-holdout protocol. Return whichever set
+    maximizes validation F1 (classification) or R² (regression).
+
+    This recovers compact high-signal pairs (e.g. two clinical fields) that the
+    LLM may skip when it forward-selects many weaker columns.
+    """
+    meta: Dict[str, Any] = {
+        "source": "agent_iteration",
+        "pairs_checked": 0,
+    }
+    pool = feature_pool[: min(22, len(feature_pool))]
+
+    def score_feats(feats: List[str]) -> Optional[Tuple[float, dict]]:
+        return _repeated_heldout_score_from_df(
+            df, target, feats, problem_type, np.random.default_rng(42)
+        )
+
+    out_agent = score_feats(agent_best_features)
+    if not out_agent:
+        return list(agent_best_features), meta
+
+    best_feats = list(agent_best_features)
+    if problem_type == "classification":
+        best_f1 = float(out_agent[1].get("validation_f1", out_agent[0]))
+        best_acc = float(out_agent[1].get("validation_accuracy", 0.0))
+    else:
+        best_r2 = float(out_agent[1].get("validation_r2", out_agent[0]))
+
+    for i in range(len(pool)):
+        for j in range(i + 1, len(pool)):
+            pair = [pool[i], pool[j]]
+            meta["pairs_checked"] = int(meta.get("pairs_checked", 0)) + 1
+            out = score_feats(pair)
+            if not out:
+                continue
+            if problem_type == "classification":
+                f1 = float(out[1].get("validation_f1", out[0]))
+                acc = float(out[1].get("validation_accuracy", 0.0))
+                if _is_better_classification_score(f1, acc, best_f1, best_acc):
+                    best_f1, best_acc = f1, acc
+                    best_feats = pair
+                    meta["source"] = "ranked_pair_champion"
+                    meta["winning_pair"] = list(pair)
+            else:
+                r2 = float(out[1].get("validation_r2", out[0]))
+                if r2 > best_r2:
+                    best_r2 = r2
+                    best_feats = pair
+                    meta["source"] = "ranked_pair_champion"
+                    meta["winning_pair"] = list(pair)
+
+    return best_feats, meta
+
+
+def _agent_pick_best_of_champion_and_subset(
+    df: pd.DataFrame,
+    target: str,
+    problem_type: str,
+    feature_pool: List[str],
+    champion_feats: List[str],
+    champion_meta: Dict[str, Any],
+) -> Tuple[List[str], Dict[str, Any]]:
+    """
+    Run a stronger validation subset search on the ranked agent pool (wider pool /
+    higher max_k than the default pipeline, exhaustive when small else greedy), then
+    pick whichever of (champion_feats, subset_feats) scores higher on repeated holdout.
+    """
+    out: Dict[str, Any] = {
+        "pair_champion": champion_meta,
+        "winner": "pair_champion",
+    }
+    subset_feats, subset_meta = _optimize_feature_subset_by_validation(
+        df,
+        target,
+        list(feature_pool),
+        problem_type=problem_type,
+        max_pool=22,
+        max_k=14,
+        max_exhaustive_subset_evals=7000,
+        regression_improve_tol=1e-6,
+    )
+    out["subset_optimization"] = subset_meta.get("subset_optimization")
+
+    out_ch = _repeated_heldout_score_from_df(
+        df, target, champion_feats, problem_type, np.random.default_rng(42)
+    )
+    out_sub = _repeated_heldout_score_from_df(
+        df, target, subset_feats, problem_type, np.random.default_rng(42)
+    )
+
+    if not out_sub:
+        return list(champion_feats), out
+    if not out_ch:
+        out["winner"] = "subset_search"
+        return list(subset_feats), out
+
+    if problem_type == "classification":
+        f1_ch = float(out_ch[1].get("validation_f1", out_ch[0]))
+        acc_ch = float(out_ch[1].get("validation_accuracy", 0.0))
+        f1_sub = float(out_sub[1].get("validation_f1", out_sub[0]))
+        acc_sub = float(out_sub[1].get("validation_accuracy", 0.0))
+        if _is_better_classification_score(f1_sub, acc_sub, f1_ch, acc_ch):
+            out["winner"] = "subset_search"
+            return list(subset_feats), out
+        return list(champion_feats), out
+
+    r_ch = float(out_ch[1].get("validation_r2", out_ch[0]))
+    r_sub = float(out_sub[1].get("validation_r2", out_sub[0]))
+    if r_sub > r_ch + 1e-6:
+        out["winner"] = "subset_search"
+        return list(subset_feats), out
+    return list(champion_feats), out
+
+
+def _apply_agent_validation_metrics_to_result(
+    result: dict,
+    df: pd.DataFrame,
+    target: str,
+    problem_type: str,
+) -> None:
+    """
+    For agent-loop runs, surface repeated-holdout validation metrics as primary
+    `metrics` so the dashboard matches the protocol used to pick features. Keeps
+    the single train/test split metrics under separate keys for transparency.
+    """
+    feats = [str(f) for f in (result.get("feature_columns") or [])]
+    if not feats:
+        return
+    out = _repeated_heldout_score_from_df(
+        df, target, feats, problem_type, np.random.default_rng(42)
+    )
+    if not out:
+        return
+    _, aux = out
+    tm = result.get("metrics") or {}
+    if problem_type == "classification":
+        result["metrics"] = {
+            "f1": float(aux.get("validation_f1", tm.get("f1", 0.0))),
+            "accuracy": float(aux.get("validation_accuracy", tm.get("accuracy", 0.0))),
+            "single_split_f1": float(tm.get("f1", 0.0)),
+            "single_split_accuracy": float(tm.get("accuracy", 0.0)),
+        }
+    else:
+        result["metrics"] = {
+            "r2": float(aux.get("validation_r2", tm.get("r2", 0.0))),
+            "mae": float(tm.get("mae", 0.0)),
+            "rmse": float(tm.get("rmse", 0.0)),
+            "single_split_r2": float(tm.get("r2", 0.0)),
+        }
+
+
+def _parse_agent_feature_selection(
+    parsed: Optional[Dict[str, Any]], pool_set: set, pool_order: List[str], max_k: int = 12
+) -> Tuple[List[str], str]:
+    """Extract validated feature list and reasoning from LLM JSON."""
+    reasoning = ""
+    if isinstance(parsed, dict):
+        reasoning = str(parsed.get("reasoning") or "").strip()
+        raw = parsed.get("features")
+        if isinstance(raw, list):
+            out: List[str] = []
+            seen = set()
+            for x in raw:
+                name = str(x).strip()
+                if not name or name not in pool_set or name in seen:
+                    continue
+                out.append(name)
+                seen.add(name)
+                if len(out) >= max_k:
+                    break
+            if out:
+                return out, reasoning
+    # Fallback: top of pool
+    fb = pool_order[: min(6, len(pool_order), max_k)]
+    return fb, reasoning or "Heuristic fallback: first columns from ranked pool."
+
+
+def _run_ml_agent_feature_loop(
+    df: pd.DataFrame,
+    target: str,
+    problem_type: str,
+    feature_pool: List[str],
+    llm: LLMInferenceService,
+) -> Tuple[List[Dict[str, Any]], List[dict], int]:
+    """
+    Iterative LLM → validate features → repeated holdout score → feedback loop.
+
+    Returns:
+        (public_iterations, aux_by_index, best_iteration_index 0-based)
+    Each public record includes iteration, features, model, reasoning, score (legacy
+    chart key), plus task-specific metrics: f1_macro + validation_accuracy (classification)
+    or validation_r2 (regression) — all from the same repeated held-out protocol.
+    When there are at least two features, `feature_ablation` lists leave-one-out
+    validation deltas (marginal contribution) for each column in that iteration's set.
+    """
+    pool_order = list(feature_pool)
+    pool_set = set(pool_order)
+    pool_lines = _agent_pool_summary_lines(df, target, pool_order, problem_type)
+    ranked_top_hint = (
+        "Strongest empirical association with the target (ranked first — build sets from "
+        "these, not only peripheral columns): "
+        + ", ".join(pool_order[:10])
+    )
+
+    iterations: List[Dict[str, Any]] = []
+    aux_list: List[dict] = []
+    prior: List[Dict[str, Any]] = []
+
+    model_label = (
+        "linear_regression" if problem_type == "regression" else "logistic_classification"
+    )
+
+    for it in range(1, MAX_AGENT_TRAIN_ITERATIONS + 1):
+        feats: List[str] = []
+        reasoning = ""
+        try:
+            prompt = _build_agent_feature_loop_prompt(
+                it,
+                MAX_AGENT_TRAIN_ITERATIONS,
+                target,
+                problem_type,
+                pool_lines,
+                prior,
+                ranked_top_hint,
+            )
+            text = llm._ollama_generate_text(prompt)
+            parsed = llm._extract_balanced_json(text)
+            feats, reasoning = _parse_agent_feature_selection(
+                parsed, pool_set, pool_order
+            )
+        except Exception as exc:
+            logger.warning("Agent feature LLM step failed: %s", exc)
+            feats = pool_order[: min(6, len(pool_order))]
+            reasoning = f"LLM call failed ({exc}); using ranked-pool subset."
+
+        # Fresh RNG(42) each time so every iteration uses the same fold sequence;
+        # a single advancing RNG would give different splits per iteration.
+        out = _repeated_heldout_score_from_df(
+            df, target, feats, problem_type, np.random.default_rng(42)
+        )
+        if out is None:
+            aux: dict = {}
+            if problem_type == "regression":
+                primary = float("-inf")
+            else:
+                primary = 0.0
+        else:
+            score, aux = out
+            if problem_type == "classification":
+                primary = float(aux.get("validation_f1", score))
+            else:
+                primary = float(aux.get("validation_r2", score))
+
+        rec: Dict[str, Any] = {
+            "iteration": it,
+            "features": list(feats),
+            "model": model_label,
+            "score": float(primary),
+            "reasoning": reasoning[:4000],
+        }
+        if problem_type == "classification":
+            rec["f1_macro"] = float(primary)
+            rec["validation_accuracy"] = (
+                float(aux.get("validation_accuracy", 0.0)) if out else 0.0
+            )
+        else:
+            rec["validation_r2"] = float(primary)
+        if out and len(feats) >= 2:
+            abl = _agent_per_feature_validation_ablation(
+                df, target, feats, problem_type, cached_base=out
+            )
+            if abl:
+                rec["feature_ablation"] = abl
+        iterations.append(rec)
+        aux_list.append(dict(aux) if aux else {})
+        prior.append(rec)
+
+    best_idx = _pick_best_agent_iteration_idx(problem_type, iterations, aux_list)
+
+    return iterations, aux_list, best_idx
+
+
 @app.post("/ml/train/{file_id}", response_model=dict)
-async def train_ml_model(file_id: str):
+async def train_ml_model(
+    file_id: str,
+    agent_loop: bool = Query(
+        False,
+        description=(
+            "If true, run validation-based feature engineering (when applicable), then "
+            "up to 5 LLM-guided feature-selection iterations with validation feedback; "
+            "final model features are refined with pair/subset search. "
+            "When false, the original automatic pipeline is unchanged."
+        ),
+    ),
+):
     """
     Train an ML model automatically:
     - choose target/features from the data
-    - fit regression model
+    - fit regression or classification model
     - return metrics + AI interpretation
+
+    Query `agent_loop=true` runs the same greedy validation feature engineering
+    as the standard path (when enough columns exist), then up to five LLM-guided
+    feature-selection iterations with validation feedback; the final fit uses
+    features chosen after pair/subset search. The default path is unchanged.
     """
     try:
         df = _load_full_cleaned_dataframe(file_id)
@@ -1487,25 +2219,97 @@ async def train_ml_model(file_id: str):
             target, features, selection_meta = _select_regression_target_and_features(df)
             selection_meta["source"] = "heuristic_fallback"
         problem_type = "classification" if _is_classification_target(df[target]) else "regression"
-        features = _rank_features_by_target_relevance(df, target, features, problem_type=problem_type)
-        features, growth_meta = _choose_feature_count_by_validation(
-            df, target, features, problem_type=problem_type
-        )
-        selection_meta.update(growth_meta)
-        fe_rng = np.random.default_rng(42)
-        df, features, fe_meta = _maybe_apply_feature_engineering(
-            df, target, features, problem_type, fe_rng
-        )
-        selection_meta["feature_engineering"] = fe_meta
-        features, subset_meta = _optimize_feature_subset_by_validation(
-            df, target, features, problem_type=problem_type
-        )
-        selection_meta.update(subset_meta)
-        if problem_type == "classification":
-            result = _train_logistic_classification(df, target, features)
+
+        if agent_loop:
+            selection_meta = dict(selection_meta)
+            fe_rng = np.random.default_rng(42)
+            base_for_fe = _rank_features_by_target_relevance(
+                df,
+                target,
+                [f for f in features if f in df.columns and str(f) != str(target)],
+                problem_type=problem_type,
+            )
+            fe_seed = base_for_fe[: min(12, len(base_for_fe))]
+            if len(fe_seed) >= 2:
+                df, _, fe_meta = _maybe_apply_feature_engineering(
+                    df, target, fe_seed, problem_type, fe_rng
+                )
+            else:
+                fe_meta = {
+                    "attempted": False,
+                    "note": "Not enough ranked columns to run feature engineering before the agent loop.",
+                }
+            selection_meta["feature_engineering"] = fe_meta
+
+            feature_pool = _numeric_feature_pool_for_agent(
+                df, target, problem_type, max_pool=28
+            )
+            if len(feature_pool) < 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Agent loop needs at least two numeric candidate features besides the target.",
+                )
+            llm_agent = LLMInferenceService()
+            agent_iterations, _agent_aux, best_idx = _run_ml_agent_feature_loop(
+                df, target, problem_type, feature_pool, llm_agent
+            )
+            best_features = list(agent_iterations[best_idx]["features"])
+            if not best_features:
+                best_features = feature_pool[: min(6, len(feature_pool))]
+            champion_feats, champion_meta = _agent_global_champion_features(
+                df, target, problem_type, feature_pool, best_features
+            )
+            final_feats, merge_meta = _agent_pick_best_of_champion_and_subset(
+                df, target, problem_type, feature_pool, champion_feats, champion_meta
+            )
+            selection_meta["agent_loop"] = {
+                "enabled": True,
+                "max_iterations": MAX_AGENT_TRAIN_ITERATIONS,
+                "feature_pool": feature_pool,
+                "best_iteration_index": int(best_idx),
+                "best_score": float(agent_iterations[best_idx]["score"]),
+                "ranked_pair_champion": champion_meta,
+                "post_agent_feature_merge": merge_meta,
+                "skipped_legacy_steps": [
+                    "feature_count_validation_growth",
+                ],
+            }
+            iter_best = list(agent_iterations[best_idx]["features"])
+            if final_feats != iter_best:
+                selection_meta["agent_loop"]["refined_from_best_iteration"] = True
+                selection_meta["agent_loop"]["best_iteration_feature_set"] = iter_best
+            best_features = final_feats
+
+            if problem_type == "classification":
+                result = _train_logistic_classification(df, target, best_features)
+            else:
+                result = _train_linear_regression_closed_form(df, target, best_features)
+            _apply_agent_validation_metrics_to_result(
+                result, df, target, problem_type
+            )
+            result["selection"] = selection_meta
         else:
-            result = _train_linear_regression_closed_form(df, target, features)
-        result["selection"] = selection_meta
+            features = _rank_features_by_target_relevance(
+                df, target, features, problem_type=problem_type
+            )
+            features, growth_meta = _choose_feature_count_by_validation(
+                df, target, features, problem_type=problem_type
+            )
+            selection_meta.update(growth_meta)
+            fe_rng = np.random.default_rng(42)
+            df, features, fe_meta = _maybe_apply_feature_engineering(
+                df, target, features, problem_type, fe_rng
+            )
+            selection_meta["feature_engineering"] = fe_meta
+            features, subset_meta = _optimize_feature_subset_by_validation(
+                df, target, features, problem_type=problem_type
+            )
+            selection_meta.update(subset_meta)
+            if problem_type == "classification":
+                result = _train_logistic_classification(df, target, features)
+            else:
+                result = _train_linear_regression_closed_form(df, target, features)
+            result["selection"] = selection_meta
 
         # Optional LLM explanation of model outcome.
         insight = {
@@ -1538,9 +2342,10 @@ async def train_ml_model(file_id: str):
                 ]
                 if eng_note:
                     kf.append(eng_note)
+                feat_cols = result.get("feature_columns") or []
                 insight = {
                     "summary": (
-                        f"Trained classification model to predict {target} using {len(features)} feature(s). "
+                        f"Trained classification model to predict {target} using {len(feat_cols)} feature(s). "
                         f"Holdout Accuracy={m.get('accuracy', 0.0):.3f}, F1={m.get('f1', 0.0):.3f}."
                     ),
                     "key_findings": kf,
@@ -1550,15 +2355,21 @@ async def train_ml_model(file_id: str):
                     ],
                 }
             else:
+                feat_cols = result.get("feature_columns") or []
+                top_coef = (
+                    result["coefficients"][0]["feature"]
+                    if result["coefficients"]
+                    else (feat_cols[0] if feat_cols else "?")
+                )
                 kf = [
                     f"Target column: {target}.",
-                    f"Most influential feature by coefficient: {result['coefficients'][0]['feature'] if result['coefficients'] else features[0]}.",
+                    f"Most influential feature by coefficient: {top_coef}.",
                 ]
                 if eng_note:
                     kf.append(eng_note)
                 insight = {
                     "summary": (
-                        f"Trained linear regression to predict {target} using {len(features)} feature(s). "
+                        f"Trained linear regression to predict {target} using {len(feat_cols)} feature(s). "
                         f"Holdout R²={m['r2']:.3f}, MAE={m['mae']:.3f}, RMSE={m['rmse']:.3f}."
                     ),
                     "key_findings": kf,
@@ -1568,11 +2379,17 @@ async def train_ml_model(file_id: str):
                     ],
                 }
 
-        return {
+        out_body: Dict[str, Any] = {
             "file_id": file_id,
             "model": result,
             "insights": insight,
         }
+        if agent_loop:
+            out_body["agent_iterations"] = agent_iterations
+            out_body["agent_best_iteration"] = int(
+                agent_iterations[best_idx]["iteration"]
+            )
+        return out_body
     except HTTPException:
         raise
     except Exception as e:
