@@ -101,7 +101,3 @@ The backend defaults to `OLLAMA_HOST=http://localhost:11434` and `OLLAMA_MODEL=l
 
 - **Agent loop** is heavier (multiple validation scores and optional LLM calls); ensure Ollama is running if you expect LLM steps to succeed.
 - **Production**: build the frontend (`npm run build`), run with `npm start`, set `NEXT_PUBLIC_API_URL` and CORS appropriately, and run the API behind a process manager or container.
-
-## License
-
-No license file is included in this repository; add one if you intend to open-source or redistribute the project.
