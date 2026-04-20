@@ -96,8 +96,3 @@ The backend defaults to `OLLAMA_HOST=http://localhost:11434` and `OLLAMA_MODEL=l
 - `POST /upload` — upload CSV, returns `file_id` and preview.
 - `GET /analysis/{file_id}` — full analysis payload for the dashboard.
 - `POST /ml/train/{file_id}` — train model; add query `agent_loop=true` (or `1`) for the iterative agent loop.
-
-## Development notes
-
-- **Agent loop** is heavier (multiple validation scores and optional LLM calls); ensure Ollama is running if you expect LLM steps to succeed.
-- **Production**: build the frontend (`npm run build`), run with `npm start`, set `NEXT_PUBLIC_API_URL` and CORS appropriately, and run the API behind a process manager or container.
